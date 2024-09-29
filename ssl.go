@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/tls"
@@ -12,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/urfave/cli/v2"
 )
 
 const (
@@ -51,7 +54,7 @@ type CertificateDetail struct {
 	SignatureAlgorithm string            `json:"signatureAlgorithm"`
 }
 
-// logWriter appends messages to a log file
+// logWriter handles logging messages to a log file.
 func logWriter(message string) {
 	logFile, err := os.OpenFile("ssl_log.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -63,7 +66,7 @@ func logWriter(message string) {
 	}
 }
 
-// display prints certificate information to the console
+// display prints certificate information to the console.
 func display(data CertificateInfo) {
 	fmt.Println("\n" + Y + "[+] SSL Certificate Information:" + W)
 	fmt.Printf("%sProtocol: %s\n", G, data.Protocol)
@@ -107,7 +110,7 @@ func display(data CertificateInfo) {
 	}
 }
 
-// export writes the certificate information to a file in the specified format
+// export writes the certificate information to a file in the specified format.
 func export(output OutputConfig, data CertificateInfo) {
 	var content string
 	fileExt := filepath.Ext(output.FilePath)
@@ -168,7 +171,8 @@ func formatJSON(data CertificateInfo) string {
 	return string(contentBytes)
 }
 
-func getCertificateInfo(hostname string, timeout time.Duration) (*CertificateInfo, error) {
+// getCertificateInfo fetches SSL certificate information for a given hostname.
+func getCertificateInfo(ctx context.Context, hostname string, timeout time.Duration, verifyTLS bool) (*CertificateInfo, error) {
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostname, 443), timeout)
 	if err != nil {
 		log.Printf("Failed to connect to %s: %v", hostname, err)
@@ -176,12 +180,26 @@ func getCertificateInfo(hostname string, timeout time.Duration) (*CertificateInf
 	}
 	defer conn.Close()
 
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	tlsConfig := &tls.Config{InsecureSkipVerify: !verifyTLS}
 	tlsConn := tls.Client(conn, tlsConfig)
 
-	if err := tlsConn.Handshake(); err != nil {
-		log.Printf("TLS handshake failed: %v", err)
-		return nil, err
+	// Set a timeout for the handshake.
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- tlsConn.Handshake()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			log.Printf("TLS handshake failed: %v", err)
+			return nil, err
+		}
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 
 	certs := tlsConn.ConnectionState().PeerCertificates
@@ -239,6 +257,7 @@ func getCertificateInfo(hostname string, timeout time.Duration) (*CertificateInf
 	}, nil
 }
 
+// getKeyLength returns the key length in bits for a given public key.
 func getKeyLength(pubKey interface{}) int {
 	switch key := pubKey.(type) {
 	case *rsa.PublicKey:
@@ -250,63 +269,74 @@ func getKeyLength(pubKey interface{}) int {
 	}
 }
 
+// banner prints the initial banner for the program.
 func banner() {
 	fmt.Println(G + "===================================================" + W)
 	fmt.Println(G + "               SSL Certificate Tool                  " + W)
-	fmt.Println(G + "            Fetch  SSL Certificates      " + W)
+	fmt.Println(G + "            Fetch  SSL Certificates   --> whoamikiide{v0.0}   " + W)
 	fmt.Println(G + "===================================================" + W)
 }
 
 func main() {
-	banner()
+	app := &cli.App{
+		Name:  "sslinfo",
+		Usage: "Fetch SSL certificate information",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:     "domain",
+				Aliases:  []string{"d"},
+				Usage:    "Domain to fetch SSL information from",
+				Required: true,
+			},
+			&cli.StringFlag{
+				Name:     "output",
+				Aliases:  []string{"o"},
+				Usage:    "Output file path",
+				Required: true,
+			},
+			&cli.DurationFlag{
+				Name:    "timeout",
+				Aliases: []string{"t"},
+				Value:   5 * time.Second,
+				Usage:   "Timeout duration for the connection",
+			},
+			&cli.BoolFlag{
+				Name:  "verify",
+				Value: false,
+				Usage: "Verify the SSL certificate",
+			},
+		},
+		Action: func(c *cli.Context) error {
+			banner()
 
-	if len(os.Args) < 5 {
-		fmt.Println("Usage: sslinfo -d <domain> -o <output_file_path> [-t <timeout_in_seconds>]")
-		return
-	}
+			domain := c.String("domain")
+			outputFilePath := c.String("output")
+			timeout := c.Duration("timeout")
+			verifyTLS := c.Bool("verify")
 
-	var domain string
-	var outputFilePath string
-	var timeout time.Duration = 5 * time.Second
-
-	for i := 1; i < len(os.Args); i++ {
-		switch os.Args[i] {
-		case "-d":
-			if i+1 < len(os.Args) {
-				domain = os.Args[i+1]
-				i++
+			output := OutputConfig{
+				FilePath: outputFilePath,
 			}
-		case "-o":
-			if i+1 < len(os.Args) {
-				outputFilePath = os.Args[i+1]
-				i++
+
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+
+			certInfo, err := getCertificateInfo(ctx, domain, timeout, verifyTLS)
+			if err != nil {
+				fmt.Printf("%s[-] %sSSL is not present on target URL... Skipping...%s\n", R, C, W)
+				logWriter("[sslinfo] SSL is not present on target URL... Skipping...")
+				os.Exit(1)
 			}
-		case "-t":
-			if i+1 < len(os.Args) {
-				var err error
-				timeoutValue := os.Args[i+1]
-				timeout, err = time.ParseDuration(timeoutValue + "s")
-				if err != nil {
-					log.Fatalf("Invalid timeout value: %v", err)
-				}
-				i++
-			}
-		}
+
+			display(*certInfo)
+			export(output, *certInfo)
+			logWriter("[sslinfo] Completed")
+
+			return nil
+		},
 	}
 
-	output := OutputConfig{
-		FilePath: outputFilePath,
+	if err := app.Run(os.Args); err != nil {
+		log.Fatalf("Error running application: %v", err)
 	}
-
-	certInfo, err := getCertificateInfo(domain, timeout)
-	if err != nil {
-		fmt.Printf("%s[-] %sSSL is not present on target URL... Skipping...%s\n", R, C, W)
-		logWriter("[sslinfo] SSL is not present on target URL... Skipping...")
-		os.Exit(1)
-	}
-
-	display(*certInfo)
-
-	export(output, *certInfo)
-	logWriter("[sslinfo] Completed")
 }
