@@ -34,7 +34,7 @@ The SSL Certificate Tool (`sslinfo`) is a command-line utility for fetching SSL 
 3. Build the application:
 
    ```bash
-   go mod init
+   go mod init ssl.go
    go mod tidy
    go build -o ssl-tool
    ```
