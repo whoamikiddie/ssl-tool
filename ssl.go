@@ -18,11 +18,11 @@ import (
 )
 
 const (
-	R = "\033[38;5;196m" // Light Red
-	G = "\033[38;5;82m"  // Light Green
-	C = "\033[38;5;117m" // Light Cyan
-	W = "\033[0m"        // Reset
-	Y = "\033[38;5;226m" // Light Yellow
+	R = "\033[38;5;196m"
+	G = "\033[38;5;82m"
+	C = "\033[38;5;117m"
+	W = "\033[0m"
+	Y = "\033[38;5;226m"
 )
 
 type OutputConfig struct {
@@ -54,7 +54,6 @@ type CertificateDetail struct {
 	SignatureAlgorithm string            `json:"signatureAlgorithm"`
 }
 
-// logWriter handles logging messages to a log file.
 func logWriter(message string) {
 	logFile, err := os.OpenFile("ssl_log.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -66,7 +65,6 @@ func logWriter(message string) {
 	}
 }
 
-// display prints certificate information to the console.
 func display(data CertificateInfo) {
 	fmt.Println("\n" + Y + "[+] SSL Certificate Information:" + W)
 	fmt.Printf("%sProtocol: %s\n", G, data.Protocol)
@@ -110,7 +108,6 @@ func display(data CertificateInfo) {
 	}
 }
 
-// export writes the certificate information to a file in the specified format.
 func export(output OutputConfig, data CertificateInfo) {
 	var content string
 	fileExt := filepath.Ext(output.FilePath)
@@ -171,7 +168,6 @@ func formatJSON(data CertificateInfo) string {
 	return string(contentBytes)
 }
 
-// getCertificateInfo fetches SSL certificate information for a given hostname.
 func getCertificateInfo(ctx context.Context, hostname string, timeout time.Duration, verifyTLS bool) (*CertificateInfo, error) {
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostname, 443), timeout)
 	if err != nil {
@@ -269,7 +265,6 @@ func getKeyLength(pubKey interface{}) int {
 	}
 }
 
-// banner prints the initial banner for the program.
 func banner() {
 	fmt.Println(G + "===================================================" + W)
 	fmt.Println(G + "               SSL Certificate Tool                  " + W)
